@@ -4,7 +4,7 @@ import { getModelChain } from '@/lib/models';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamText } from 'ai';
-import { FileAttachment } from '@/lib/types';
+import { FileAttachment, FallbackAttempt } from '@/lib/types';
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
@@ -24,11 +24,14 @@ export async function POST(req: NextRequest) {
     }
 
     const modelChain = getModelChain(privacyMode);
+    const fallbackChain: FallbackAttempt[] = [];
+    const startTime = Date.now();
 
+    // Format messages with attachments
     const formattedMessages = messages.map((msg: any) => {
       if (msg.attachments && msg.attachments.length > 0) {
         const content: any[] = [{ type: 'text', text: msg.content }];
-        
+
         for (const attachment of msg.attachments as FileAttachment[]) {
           if (attachment.type.startsWith('image/')) {
             content.push({ type: 'image', image: attachment.dataUrl });
@@ -41,6 +44,7 @@ export async function POST(req: NextRequest) {
       return { role: msg.role, content: msg.content };
     });
 
+    // Try each model in the fallback chain
     for (const modelConfig of modelChain) {
       try {
         let provider;
@@ -49,11 +53,22 @@ export async function POST(req: NextRequest) {
         } else if (modelConfig.provider === 'google' && process.env.GOOGLE_API_KEY) {
           provider = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_API_KEY });
         } else if (modelConfig.provider === 'groq' && process.env.GROQ_API_KEY) {
-          provider = createOpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' });
+          provider = createOpenAI({
+            apiKey: process.env.GROQ_API_KEY,
+            baseURL: 'https://api.groq.com/openai/v1',
+          });
         } else if (modelConfig.provider === 'nvidia' && process.env.NVIDIA_API_KEY) {
-          provider = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: 'https://integrate.api.nvidia.com/v1' });
+          provider = createOpenAI({
+            apiKey: process.env.NVIDIA_API_KEY,
+            baseURL: 'https://integrate.api.nvidia.com/v1',
+          });
         } else {
-          console.warn(`Skipping ${modelConfig.provider} due to missing API key`);
+          fallbackChain.push({
+            provider: modelConfig.provider,
+            model: modelConfig.modelId,
+            success: false,
+            error: 'Missing API key',
+          });
           continue;
         }
 
@@ -63,6 +78,14 @@ export async function POST(req: NextRequest) {
           messages: formattedMessages,
         });
 
+        const elapsed = Date.now() - startTime;
+        fallbackChain.push({
+          provider: modelConfig.provider,
+          model: modelConfig.modelId,
+          success: true,
+        });
+
+        // Stream the response as clean plain text
         const stream = new ReadableStream({
           async start(controller) {
             const encoder = new TextEncoder();
@@ -82,17 +105,36 @@ export async function POST(req: NextRequest) {
           headers: {
             'Content-Type': 'text/plain; charset=utf-8',
             'X-Model-Used': modelConfig.name,
-            'X-Content-Type': 'text/event-stream',
+            'X-Provider': modelConfig.provider,
+            'X-Response-Time': String(elapsed),
+            'X-Fallback-Chain': JSON.stringify(fallbackChain),
           },
         });
-      } catch (error) {
+      } catch (error: any) {
         console.error(`Error with model ${modelConfig.name}:`, error);
+        fallbackChain.push({
+          provider: modelConfig.provider,
+          model: modelConfig.modelId,
+          success: false,
+          error: error.message || 'Unknown error',
+        });
         // Continue to the next model in the chain
       }
     }
 
-    return new Response('All models in chain failed or are unavailable', { status: 503 });
-
+    // All models failed
+    return new Response(
+      JSON.stringify({
+        error: 'All models failed',
+        fallbackChain,
+        message:
+          'Unable to get a response from any provider. Please check your API keys in Settings or .env file.',
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   } catch (error: any) {
     console.error('Chat API Error:', error);
     return new Response(error.message || 'Internal Server Error', { status: 500 });

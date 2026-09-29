@@ -1,4 +1,4 @@
-import { ChatSession } from './types';
+import { ChatSession, ExportBundle } from './types';
 
 const CHATS_KEY = 'prash-hub-chats';
 const SETTINGS_KEY = 'prash-hub-settings';
@@ -40,12 +40,12 @@ export function loadSettings(): { privacyMode: boolean; darkMode: boolean } {
   try {
     if (typeof window !== 'undefined') {
       const data = localStorage.getItem(SETTINGS_KEY);
-      return data ? JSON.parse(data) : { privacyMode: false, darkMode: false };
+      return data ? JSON.parse(data) : { privacyMode: false, darkMode: true };
     }
   } catch (error) {
     console.error('Failed to load settings from localStorage', error);
   }
-  return { privacyMode: false, darkMode: false };
+  return { privacyMode: false, darkMode: true };
 }
 
 export function saveAuthToken(token: string): void {
@@ -54,7 +54,7 @@ export function saveAuthToken(token: string): void {
       localStorage.setItem(AUTH_KEY, token);
     }
   } catch (error) {
-    console.error('Failed to save auth token to localStorage', error);
+    console.error('Failed to save auth token', error);
   }
 }
 
@@ -64,7 +64,7 @@ export function loadAuthToken(): string | null {
       return localStorage.getItem(AUTH_KEY);
     }
   } catch (error) {
-    console.error('Failed to load auth token from localStorage', error);
+    console.error('Failed to load auth token', error);
   }
   return null;
 }
@@ -75,6 +75,59 @@ export function clearAuthToken(): void {
       localStorage.removeItem(AUTH_KEY);
     }
   } catch (error) {
-    console.error('Failed to clear auth token from localStorage', error);
+    console.error('Failed to clear auth token', error);
   }
+}
+
+/* ===================== Export / Import ===================== */
+
+/** Export all chats as a downloadable JSON file */
+export function exportChats(chats: ChatSession[]): void {
+  const bundle: ExportBundle = {
+    app: 'prash-hub',
+    version: 1,
+    exportedAt: Date.now(),
+    chats,
+  };
+
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `prash-hub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Import chats from a JSON backup file. Returns merged chat list + count of imported chats. */
+export async function importChats(
+  file: File,
+  existingChats: ChatSession[]
+): Promise<{ chats: ChatSession[]; imported: number }> {
+  const text = await file.text();
+  const bundle: ExportBundle = JSON.parse(text);
+
+  if (!bundle || bundle.app !== 'prash-hub') {
+    throw new Error('Not a valid pRash Hub backup file');
+  }
+
+  const existingIds = new Set(existingChats.map((c) => c.id));
+  const newChats: ChatSession[] = [];
+  let imported = 0;
+
+  for (const chat of bundle.chats) {
+    if (existingIds.has(chat.id)) {
+      // Collision — generate new ID so existing chat isn't overwritten
+      const newId = crypto.randomUUID();
+      newChats.push({ ...chat, id: newId, title: chat.title + ' (imported)' });
+    } else {
+      newChats.push(chat);
+    }
+    imported++;
+  }
+
+  const mergedChats = [...newChats, ...existingChats].sort((a, b) => b.updatedAt - a.updatedAt);
+  return { chats: mergedChats, imported };
 }

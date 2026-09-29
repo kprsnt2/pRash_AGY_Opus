@@ -2,19 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; }
+/* ========== Custom scrollbar ========== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
 
-/* Smooth transitions */
+/* ========== Smooth transitions ========== */
 * { transition-property: background-color, border-color, color; transition-duration: 150ms; }
 
-/* Dark mode body */
+/* ========== Dark mode body (default) ========== */
 body { @apply bg-gray-950 text-gray-100; }
 
-/* Markdown styles */
+/* ========== Markdown prose ========== */
 .prose pre { @apply bg-gray-800 rounded-lg p-4 overflow-x-auto; }
 .prose code { @apply bg-gray-800 px-1.5 py-0.5 rounded text-sm; }
 .prose a { @apply text-blue-400 hover:text-blue-300; }
@@ -24,7 +24,100 @@ body { @apply bg-gray-950 text-gray-100; }
 .prose ul, .prose ol { @apply pl-6; }
 .prose blockquote { @apply border-l-4 border-blue-500 pl-4 italic; }
 
-/* Light mode overrides */
-.light body, body.light { @apply bg-white text-gray-900; }
-.light .prose pre { @apply bg-gray-100; }
-.light .prose code { @apply bg-gray-100; }
+/* ========== Light mode overrides ========== */
+.light body, body.light,
+html.light body {
+  @apply bg-white text-gray-900;
+}
+html.light .prose pre { @apply bg-gray-100 text-gray-900; }
+html.light .prose code { @apply bg-gray-100 text-gray-800; }
+html.light .prose th { @apply bg-gray-100; }
+html.light .prose th, html.light .prose td { @apply border-gray-300; }
+html.light .prose a { @apply text-blue-600 hover:text-blue-700; }
+
+/* Light mode — fix title/text visibility */
+html.light h1, html.light h2, html.light h3,
+html.light h4, html.light h5, html.light h6 {
+  @apply text-gray-900;
+}
+html.light p, html.light span, html.light div {
+  color: inherit;
+}
+
+/* ========== Fade-in animation ========== */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
+
+/* ========== Mic pulse animation ========== */
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+.animate-mic-pulse { animation: mic-pulse 1.5s ease-in-out infinite; }
+
+/* ========== Print styles ========== */
+@media print {
+  /* Hide everything except the worksheet */
+  body * {
+    visibility: hidden;
+  }
+  .worksheet-printable-area,
+  .worksheet-printable-area * {
+    visibility: visible !important;
+  }
+  .worksheet-printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0.5in;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Hide toolbar and non-print elements */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Clean typography for print */
+  .worksheet-printable-area .prose {
+    max-width: none;
+    font-size: 12pt;
+    line-height: 1.6;
+    color: black !important;
+  }
+  .worksheet-printable-area .prose pre {
+    background: #f3f4f6 !important;
+    border: 1px solid #d1d5db;
+    color: black !important;
+  }
+  .worksheet-printable-area .prose code {
+    background: #f3f4f6 !important;
+    color: black !important;
+  }
+  .worksheet-printable-area .prose table {
+    border-collapse: collapse;
+  }
+  .worksheet-printable-area .prose th,
+  .worksheet-printable-area .prose td {
+    border: 1px solid #374151 !important;
+    padding: 6px 10px;
+  }
+  .worksheet-printable-area .prose th {
+    background: #e5e7eb !important;
+    font-weight: bold;
+  }
+
+  /* Answer key page break */
+  .worksheet-page-break {
+    page-break-before: always;
+  }
+}
+
+/* ========== No-scrollbar utility ========== */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

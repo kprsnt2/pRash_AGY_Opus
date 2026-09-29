@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { FileAttachment } from '@/lib/types';
+import { useSpeechRecognition, isSpeechRecognitionSupported } from '@/hooks/useSpeechRecognition';
 import FilePreview from './FilePreview';
 
 interface ChatInputProps {
@@ -18,6 +19,19 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Voice input
+  const voiceSupported = typeof window !== 'undefined' && isSpeechRecognitionSupported();
+  const { isListening, startListening, stopListening, resetTranscript } = useSpeechRecognition({
+    onResult: (transcript, isFinal) => {
+      if (isFinal) {
+        setContent(prev => {
+          const separator = prev.trim() ? ' ' : '';
+          return prev + separator + transcript;
+        });
+      }
+    },
+  });
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -27,7 +41,13 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
 
   const handleSend = () => {
     if ((!content.trim() && pendingFiles.length === 0) || isLoading) return;
-    
+
+    // Stop listening if voice is active
+    if (isListening) {
+      stopListening();
+      resetTranscript();
+    }
+
     onSend(content.trim(), pendingFiles.length > 0 ? pendingFiles : undefined);
     setContent('');
     setPendingFiles([]);
@@ -45,7 +65,7 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
-    
+
     Array.from(files).forEach(file => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -80,20 +100,29 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
     }
   };
 
+  const handleMicToggle = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      resetTranscript();
+      startListening();
+    }
+  };
+
   const canSend = (content.trim().length > 0 || pendingFiles.length > 0) && !isLoading;
 
   return (
     <div className="relative">
       {pendingFiles.length > 0 && (
         <div className="mb-3">
-          <FilePreview 
-            files={pendingFiles} 
-            onRemove={(id) => setPendingFiles(prev => prev.filter(f => f.id !== id))} 
+          <FilePreview
+            files={pendingFiles}
+            onRemove={(id) => setPendingFiles(prev => prev.filter(f => f.id !== id))}
           />
         </div>
       )}
 
-      <div 
+      <div
         className={`relative flex items-end gap-2 bg-white dark:bg-gray-800 border ${isDragging ? 'border-blue-500 border-dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-700'} rounded-xl shadow-inner p-2 transition-colors`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -105,6 +134,7 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
           </div>
         )}
 
+        {/* File attach button */}
         {supportsFiles && (
           <>
             <button
@@ -126,17 +156,35 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
           </>
         )}
 
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={supportsFiles ? "Type a message or drop files..." : "Type a message..."}
+          placeholder={isListening ? '🎤 Listening...' : supportsFiles ? 'Type a message or drop files...' : 'Type a message...'}
           className="flex-1 max-h-32 bg-transparent text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-none outline-none py-2 px-1"
           rows={1}
           disabled={isLoading}
         />
 
+        {/* Mic button */}
+        {voiceSupported && (
+          <button
+            onClick={handleMicToggle}
+            className={`p-2 rounded-lg transition-all ${
+              isListening
+                ? 'bg-red-500 text-white animate-mic-pulse'
+                : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+            title={isListening ? 'Stop listening' : 'Start voice input'}
+            disabled={isLoading}
+          >
+            {isListening ? '⏹' : '🎤'}
+          </button>
+        )}
+
+        {/* Send / Stop button */}
         {isLoading ? (
           <button
             onClick={onStop}
@@ -150,8 +198,8 @@ export default function ChatInput({ onSend, isLoading, onStop, supportsFiles }: 
             onClick={handleSend}
             disabled={!canSend}
             className={`p-2 rounded-lg transition-colors ${
-              canSend 
-                ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md' 
+              canSend
+                ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md'
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
             }`}
             title="Send message"

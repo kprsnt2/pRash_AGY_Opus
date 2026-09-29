@@ -4,7 +4,19 @@ export interface Message {
   content: string;
   attachments?: FileAttachment[];
   model?: string;
+  provider?: string;
+  agentId?: string;
   timestamp: number;
+  responseTime?: number;
+  tokenEstimate?: number;
+  fallbackChain?: FallbackAttempt[];
+}
+
+export interface FallbackAttempt {
+  provider: string;
+  model: string;
+  success: boolean;
+  error?: string;
 }
 
 export interface FileAttachment {
@@ -38,8 +50,17 @@ export interface ChatSession {
 export interface ModelConfig {
   id: string;
   name: string;
-  provider: 'openai' | 'google' | 'groq' | 'nvidia';
+  provider: ModelProvider;
   modelId: string;
   supportsVision: boolean;
   priority: number;
 }
+
+export interface ExportBundle {
+  app: 'prash-hub';
+  version: 1;
+  exportedAt: number;
+  chats: ChatSession[];
+}
+
+export type ModelProvider = 'openai' | 'google' | 'groq' | 'nvidia';

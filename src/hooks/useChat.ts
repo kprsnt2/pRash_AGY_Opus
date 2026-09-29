@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react';
-import { Message, FileAttachment } from '@/lib/types';
+import { Message, FileAttachment, FallbackAttempt } from '@/lib/types';
 
 interface UseChatOptions {
   chatId: string | null;
@@ -19,6 +19,11 @@ export interface UseChatReturn {
   currentModel: string | null;
   sendMessage: (content: string, attachments?: FileAttachment[]) => Promise<void>;
   stopGenerating: () => void;
+}
+
+/** Rough token estimate: ~1.3 tokens per word */
+function estimateTokens(text: string): number {
+  return Math.round(text.split(/\s+/).length * 1.3);
 }
 
 export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, chatId }: UseChatOptions): UseChatReturn {
@@ -39,6 +44,7 @@ export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, 
       role: 'user',
       content,
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      agentId,
       timestamp: Date.now(),
     };
 
@@ -56,13 +62,18 @@ export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, 
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    const sendStart = Date.now();
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: updatedMessages.map(m => ({ role: m.role, content: m.content, attachments: m.attachments })),
+          messages: updatedMessages.map(m => ({
+            role: m.role,
+            content: m.content,
+            attachments: m.attachments,
+          })),
           agentId,
           privacyMode,
         }),
@@ -70,10 +81,31 @@ export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, 
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        // Try to parse error response
+        let errorMsg = `API error: ${response.status}`;
+        try {
+          const errBody = await response.json();
+          if (errBody.message) errorMsg = errBody.message;
+          if (errBody.fallbackChain) {
+            const failedProviders = errBody.fallbackChain
+              .filter((f: FallbackAttempt) => !f.success)
+              .map((f: FallbackAttempt) => `${f.provider}: ${f.error}`)
+              .join(', ');
+            if (failedProviders) errorMsg += ` (${failedProviders})`;
+          }
+        } catch { /* ignore */ }
+        throw new Error(errorMsg);
       }
 
       const modelUsed = response.headers.get('X-Model-Used') || 'Unknown';
+      const providerUsed = response.headers.get('X-Provider') || '';
+      const serverTime = response.headers.get('X-Response-Time');
+      let fallbackChain: FallbackAttempt[] = [];
+      try {
+        const chainStr = response.headers.get('X-Fallback-Chain');
+        if (chainStr) fallbackChain = JSON.parse(chainStr);
+      } catch { /* ignore */ }
+
       setCurrentModel(modelUsed);
 
       const assistantMessage: Message = {
@@ -81,7 +113,10 @@ export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, 
         role: 'assistant',
         content: '',
         model: modelUsed,
+        provider: providerUsed,
+        agentId,
         timestamp: Date.now(),
+        fallbackChain: fallbackChain.length > 0 ? fallbackChain : undefined,
       };
 
       const newMessages = [...updatedMessages, assistantMessage];
@@ -106,8 +141,22 @@ export function useChat({ agentId, privacyMode, onUpdateChat, onNewChatCreated, 
         });
       }
 
-      const finalMessages = [...updatedMessages, { ...assistantMessage, content: fullContent }];
-      const title = updatedMessages.length <= 1 ? content.slice(0, 50) + (content.length > 50 ? '...' : '') : undefined;
+      const responseTime = Date.now() - sendStart;
+      const tokenEstimate = estimateTokens(fullContent);
+
+      const finalMessage: Message = {
+        ...assistantMessage,
+        content: fullContent,
+        responseTime,
+        tokenEstimate,
+      };
+      const finalMessages = [...updatedMessages, finalMessage];
+
+      setMessages(finalMessages);
+
+      const title = updatedMessages.length <= 1
+        ? content.slice(0, 50) + (content.length > 50 ? '...' : '')
+        : undefined;
       onUpdateChat(activeChatId, finalMessages, title);
 
     } catch (err: any) {

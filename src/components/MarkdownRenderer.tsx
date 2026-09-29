@@ -28,7 +28,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         code: ({ node, className, children, ...props }) => {
           const match = /language-(\w+)/.exec(className || '');
           const isInline = !match;
-          
+
           if (isInline) {
             return (
               <code className="bg-gray-200 dark:bg-gray-700 text-pink-500 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm" {...props}>

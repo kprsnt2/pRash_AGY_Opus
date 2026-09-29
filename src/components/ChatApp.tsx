@@ -1,7 +1,8 @@
 'use client'
 import React, { useState, useEffect } from 'react';
-import { agents, getAgent } from '@/lib/agents';
+import { getAgent } from '@/lib/agents';
 import { saveChats, loadChats, saveSettings, loadSettings, saveAuthToken, loadAuthToken, clearAuthToken } from '@/lib/storage';
+import { primeVoices } from '@/lib/speech';
 import { ChatSession, Message } from '@/lib/types';
 import Sidebar from '@/components/Sidebar';
 import AgentSelector from '@/components/AgentSelector';
@@ -18,7 +19,8 @@ export default function ChatApp() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
-  
+  const [agentSelectorMidChat, setAgentSelectorMidChat] = useState(false);
+
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
@@ -28,33 +30,30 @@ export default function ChatApp() {
       if (settings.privacyMode !== undefined) setPrivacyMode(settings.privacyMode);
       if (settings.darkMode !== undefined) {
         setDarkMode(settings.darkMode);
-        if (settings.darkMode) {
-          document.documentElement.classList.add('dark');
-          document.documentElement.classList.remove('light');
-        } else {
-          document.documentElement.classList.add('light');
-          document.documentElement.classList.remove('dark');
-        }
+        applyTheme(settings.darkMode);
       }
     }
-    
+
     const loadedChats = loadChats();
     if (loadedChats) setChats(loadedChats);
-    
+
     const token = loadAuthToken();
     if (token) setAuthenticated(true);
-    
+
+    // Prime TTS voices
+    primeVoices();
+
     const handleLogout = () => {
       clearAuthToken();
       setAuthenticated(false);
     };
-    
+
     const handleClearChats = () => {
       setChats([]);
       saveChats([]);
       setCurrentChatId(null);
     };
-    
+
     window.addEventListener('logout', handleLogout);
     window.addEventListener('clearChats', handleClearChats);
     return () => {
@@ -62,6 +61,16 @@ export default function ChatApp() {
       window.removeEventListener('clearChats', handleClearChats);
     };
   }, []);
+
+  const applyTheme = (isDark: boolean) => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,10 +110,20 @@ export default function ChatApp() {
     if (currentChatId === id) setCurrentChatId(null);
   };
 
+  /** Start a NEW chat with selected agent (from sidebar / agent selector) */
   const handleSelectAgent = (id: string) => {
     setCurrentAgentId(id);
     setShowAgentSelector(false);
+    setAgentSelectorMidChat(false);
     handleNewChat();
+  };
+
+  /** Switch agent mid-chat WITHOUT clearing the conversation */
+  const handleSwitchAgentMidChat = (id: string) => {
+    setCurrentAgentId(id);
+    setShowAgentSelector(false);
+    setAgentSelectorMidChat(false);
+    // Don't clear chat — agent switch is tracked per-message
   };
 
   const handleUpdateChat = (chatId: string, messages: Message[], title?: string) => {
@@ -143,22 +162,23 @@ export default function ChatApp() {
     const newDark = !darkMode;
     setDarkMode(newDark);
     saveSettings({ privacyMode, darkMode: newDark });
-    if (newDark) {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-    } else {
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
-    }
+    applyTheme(newDark);
+  };
+
+  const handleImportChats = (importedChats: ChatSession[]) => {
+    setChats(importedChats);
+    saveChats(importedChats);
   };
 
   const currentAgent = getAgent(currentAgentId);
 
+  /* ===== Login Screen ===== */
   if (!authenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-950 p-4">
         <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-xl shadow-2xl p-8">
-          <h1 className="text-3xl font-bold text-center text-white mb-8">🏠 pRash Hub</h1>
+          <h1 className="text-3xl font-bold text-center text-white mb-2">🏠 pRash Hub</h1>
+          <p className="text-center text-gray-400 text-sm mb-8">All-in-one AI Chat Hub</p>
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <input
@@ -167,6 +187,7 @@ export default function ChatApp() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 className="w-full bg-gray-800 text-white border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:border-blue-500 transition-colors"
+                autoFocus
               />
               {loginError && <p className="text-red-400 text-sm mt-2">{loginError}</p>}
             </div>
@@ -182,8 +203,10 @@ export default function ChatApp() {
     );
   }
 
+  /* ===== Main App ===== */
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
+    <div className="flex h-screen overflow-hidden bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+      {/* Sidebar */}
       <Sidebar
         chats={chats}
         currentChatId={currentChatId}
@@ -191,70 +214,114 @@ export default function ChatApp() {
         onNewChat={handleNewChat}
         onDeleteChat={handleDeleteChat}
         currentAgentId={currentAgentId}
-        onSelectAgent={() => setShowAgentSelector(true)}
+        onSelectAgent={() => {
+          setAgentSelectorMidChat(false);
+          setShowAgentSelector(true);
+        }}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         privacyMode={privacyMode}
         onTogglePrivacy={handleTogglePrivacy}
         onOpenSettings={() => setShowSettings(true)}
+        onImportChats={handleImportChats}
       />
 
+      {/* Main content */}
       <div className="flex-1 flex flex-col h-full relative w-full">
-        <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900/50 backdrop-blur">
+        {/* Top bar */}
+        <div className="h-14 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 bg-white/80 dark:bg-gray-900/50 backdrop-blur">
           <div className="flex items-center gap-3">
-            <button 
+            {/* Mobile sidebar toggle */}
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 rounded-lg hover:bg-gray-800 md:hidden"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 md:hidden"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
             </button>
-            <div 
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-800 cursor-pointer transition-colors"
-              onClick={() => setShowAgentSelector(true)}
+
+            {/* Agent name — click to start new chat with different agent */}
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors"
+              onClick={() => {
+                setAgentSelectorMidChat(false);
+                setShowAgentSelector(true);
+              }}
             >
               <span className="text-xl">{currentAgent?.icon || '🤖'}</span>
-              <span className="font-medium hidden sm:block">{currentAgent?.name || 'Agent'}</span>
+              <span className="font-medium hidden sm:block text-gray-800 dark:text-gray-200">{currentAgent?.name || 'Agent'}</span>
               <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </div>
+
+            {/* Mid-chat agent switch button (only when in an active chat) */}
+            {currentChatId && (
+              <button
+                onClick={() => {
+                  setAgentSelectorMidChat(true);
+                  setShowAgentSelector(true);
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                title="Switch agent for this conversation"
+              >
+                🔄 Switch
+              </button>
+            )}
           </div>
-          
+
           <div className="flex items-center gap-3">
+            {/* Privacy badge */}
             {privacyMode && (
-              <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-400/10 px-2.5 py-1 rounded-full">
+              <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 px-2.5 py-1 rounded-full">
                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
                 <span className="hidden sm:inline">Private</span>
               </span>
             )}
-            <button 
+
+            {/* Theme toggle */}
+            <button
+              onClick={handleToggleDarkMode}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {darkMode ? '☀️' : '🌙'}
+            </button>
+
+            {/* Settings */}
+            <button
               onClick={() => setShowSettings(true)}
-              className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             </button>
           </div>
         </div>
 
+        {/* Chat area */}
         <div className="flex-1 overflow-hidden relative">
-          <ChatArea 
+          <ChatArea
             chatId={currentChatId}
             agentId={currentAgentId}
             privacyMode={privacyMode}
             onUpdateChat={handleUpdateChat}
             onNewChatCreated={handleNewChatCreated}
-            onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
             chats={chats}
           />
         </div>
       </div>
 
+      {/* Agent selector modal */}
       {showAgentSelector && (
-        <AgentSelector 
+        <AgentSelector
           currentAgentId={currentAgentId}
-          onSelectAgent={handleSelectAgent}
-          onClose={() => setShowAgentSelector(false)}
+          onSelectAgent={agentSelectorMidChat ? handleSwitchAgentMidChat : handleSelectAgent}
+          onClose={() => {
+            setShowAgentSelector(false);
+            setAgentSelectorMidChat(false);
+          }}
+          midChatMode={agentSelectorMidChat}
         />
       )}
 
+      {/* Settings panel */}
       <SettingsPanel
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
